@@ -1,0 +1,194 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:mqtt_client/mqtt_client.dart';
+
+class HomeConnectMqtt extends StatefulWidget {
+  final String mqttServer;
+  final String username;
+  final String password;
+
+  const HomeConnectMqtt({
+    Key? key,
+    required this.mqttServer,
+    required this.username,
+    required this.password,
+  }) : super(key: key);
+
+  @override
+  State<HomeConnectMqtt> createState() => _HomeConnectMqttState();
+}
+
+class _HomeConnectMqttState extends State<HomeConnectMqtt> {
+  late MqttServerClient client;
+  late List<String> topics = ['co2', 'temp', 'humid', 'light', 'press', 'radar'];
+  late List<String> values = List.filled(6, ''); // List để lưu giá trị của các topic
+
+  @override
+  void initState() {
+    super.initState();
+    client = MqttServerClient(widget.mqttServer, widget.username);
+    connectMqttServer();
+  }
+  @override
+  void dispose() {
+    client.disconnect(); // Ngắt kết nối khi StatefulWidget bị dispose
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("MQTT"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: () {
+              // Handle search icon tap
+            },
+          ),
+        ],
+      ),
+      body: GridView.count(
+        crossAxisCount: 2,
+        childAspectRatio: 1.0,
+        padding: const EdgeInsets.all(10.0),
+        mainAxisSpacing: 10.0,
+        crossAxisSpacing: 10.0,
+        children: List.generate(topics.length, (index) {
+          return IoTBox(title: topics[index], additionalText: values[index]);
+        }),
+      ),
+      bottomNavigationBar: BottomAppBar(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.home),
+              onPressed: () {
+                // Handle home icon tap
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.analytics),
+              onPressed: () {
+                // Handle analysis icon tap
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () {
+                // Handle settings icon tap
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Hàm kết nối MQTT server
+  Future<void> connectMqttServer() async {
+    final String mqttServerHome = widget.mqttServer;
+    final String clientID = widget.username;
+    client = MqttServerClient(mqttServerHome, clientID);
+    client.port = 1883;
+    client.logging(on: true);
+    client.onDisconnected = onDisconnected;
+    client.onConnected = onConnected;
+    client.connectTimeoutPeriod = 2000;
+    client.keepAlivePeriod = 20;
+
+    final connectMessage = MqttConnectMessage()
+        .withClientIdentifier(clientID)
+        .startClean()
+        .withWillQos(MqttQos.atLeastOnce)
+        .withWillTopic('NamCLoud/feeds/co2')
+        .withWillMessage('Hi Nam')
+        .authenticateAs(widget.username, widget.password);
+
+    client.connectionMessage = connectMessage;
+
+    try {
+      await client.connect();
+    } on NoConnectionException catch (e) {
+      print('MQTT client exception - $e');
+      client.disconnect();
+    } on SocketException catch (e) {
+      print('Socket exception - $e');
+      client.disconnect();
+    }
+  }
+
+  // Hàm được gọi khi kết nối thành công
+  void onConnected() {
+    print('Connected to the MQTT server');
+    const topicMain = 'NamCLoud/feeds/';
+
+    // Subscribe từng topic và lắng nghe cập nhật
+    for (int i = 0; i < topics.length; i++) {
+      final currentTopic = topicMain + topics[i];
+      client.subscribe(currentTopic, MqttQos.atMostOnce);
+    }
+
+    client.updates!.listen((List<MqttReceivedMessage<MqttMessage?>>? c) {
+      final recMess = c![0].payload as MqttPublishMessage;
+      final pt = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
+
+      // Lọc giá trị từ payload và cập nhật vào danh sách values
+      setState(() {
+        for (int i = 0; i < topics.length; i++) {
+          final currentTopic = topicMain + topics[i];
+          if (c[0].topic == currentTopic) {
+            values[i] = pt;
+          }
+        }
+      });
+    });
+  }
+
+  // Hàm được gọi khi mất kết nối
+  void onDisconnected() {
+    print('Disconnected from the MQTT server');
+  }
+}
+
+
+class IoTBox extends StatelessWidget {
+  final String title;
+  final String additionalText;
+
+  const IoTBox({
+    Key? key,
+    required this.title,
+    required this.additionalText,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.blue, width: 2.0),
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontSize: 18.0, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              additionalText,
+              style: const TextStyle(fontSize: 16.0),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
